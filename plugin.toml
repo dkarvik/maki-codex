@@ -2,3 +2,4 @@
 fs_read = true
 fs_write = true
 net = true
+run = true
