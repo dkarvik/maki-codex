@@ -14,8 +14,8 @@ Sign in to Maki's OpenAI provider and approve the package permissions.
 
 ## Tools
 
-`codex_search`: Perform a web search with codex
-`image_generation`: Generate an image
+* `codex_search`: Perform a web search with codex
+* `image_generation`: Generate an image
 
 ## Commands
 
