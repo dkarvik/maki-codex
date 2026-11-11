@@ -344,7 +344,7 @@ end
 local function default_model()
   local auth, auth_err = credentials()
   if not auth then return nil, auth_err end
-  local response, err = maki.net.request(CODEX_BASE .. "/models", {
+  local response, err = maki.net.request(CODEX_BASE .. "/models?client_version=0.153.4", {
     headers = {
       ["Authorization"] = "Bearer " .. auth.access,
       ["chatgpt-account-id"] = auth.account_id,
@@ -353,13 +353,24 @@ local function default_model()
       ["User-Agent"] = "codex_cli_rs/0.0.0 (maki)",
     },
   })
-  if not response or response.status < 200 or response.status >= 300 then return "gpt-5.5" end
-  local models = maki.json.decode(response.body)
-  for _, model in ipairs((models or {}).models or {}) do
-    if model.is_default then return model.slug or model.id or model.model end
+  if not response then return nil, "could not fetch Codex models: " .. tostring(err) end
+  if response.status < 200 or response.status >= 300 then
+    return nil, describe_http_error(response.status, response.body)
   end
-  local first = ((models or {}).models or {})[1]
-  return first and (first.slug or first.id or first.model) or "gpt-5.5"
+  local catalog, decode_err = maki.json.decode(response.body)
+  if type(catalog) ~= "table" or type(catalog.models) ~= "table" then
+    return nil, "invalid Codex models response: " .. tostring(decode_err or "missing models")
+  end
+  local selected
+  for _, model in ipairs(catalog.models) do
+    if type(model) == "table" and model.visibility == "list" and type(model.slug) == "string" and model.slug ~= "" then
+      if not selected or (tonumber(model.priority) or math.huge) < (tonumber(selected.priority) or math.huge) then
+        selected = model
+      end
+    end
+  end
+  if not selected then return nil, "Codex models response listed no available models" end
+  return selected.slug
 end
 
 local function iso_to_epoch(value)
@@ -618,7 +629,7 @@ maki.api.register_tool({
       prompt = { type = "string", description = "Image generation or editing prompt." },
       images = { type = "array", items = { type = "string" }, description = "Optional local image paths to edit or use as references." },
       output_format = { type = "string", enum = { "png", "jpeg", "webp" }, description = "Output format; defaults to png." },
-      model = { type = "string", description = "Optional Codex model; defaults to gpt-5.5." },
+      model = { type = "string", description = "Optional Codex model; defaults to the account's default Codex model." },
     },
     required = { "prompt" },
   },
@@ -645,8 +656,15 @@ maki.api.register_tool({
       content[#content + 1] = { type = "input_image", detail = "auto", image_url = "data:" .. media_type .. ";base64," .. maki.base64.encode(bytes) }
     end
 
+    local model = input.model
+    if not model or model == "" then
+      local discovered, model_err = default_model()
+      if not discovered then return { llm_output = "error: " .. model_err, is_error = true } end
+      model = discovered
+    end
+
     local body, request_err = request("/responses", {
-      model = input.model or "gpt-5.5",
+      model = model,
       instructions = "",
       input = { { role = "user", content = content } },
       tools = { { type = "image_generation", output_format = format } },
